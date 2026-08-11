@@ -6,7 +6,7 @@ MAC(Multiply-Accumulate) 연산으로 패턴이 십자가(Cross)인지 X인지 �
 
 ### 환경
 
-- Python 3.9.6 (`python3 --version`으로 확인)
+- Python 3.12.13 (`python --version`으로 확인)
 - 외부 라이브러리 없음 — 표준 라이브러리 `json`, `time`만 사용
 
 ### 실행 명령어
