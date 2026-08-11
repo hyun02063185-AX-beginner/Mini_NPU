@@ -3,6 +3,11 @@ import time
 
 EPSILON = 1e-9  # 판정 시 "사실상 같다"고 볼 오차 허용 범위. Day 3 data.json에도 동일하게 적용됨
 REPEAT = 10  # 성능 측정 시 반복 횟수. 나중에 100/1000으로 바꿔 실험할 때 이 한 곳만 고치면 됨
+BONUS_REPEAT = 1000
+# 오늘 비교하는 건 "같은 크기"에서 2D vs 1D의 차이인데, 그 차이가 크기별 차이보다 훨씬 작음.
+# 10회로 재면 측정 잡음이 실제 차이보다 커서 개선율 부호가 뒤집히는 현상이 생기므로 1000회로 늘림.
+# 기본 과제 성능표(REPEAT=10)는 그대로 두고, 비교 전용으로만 이 상수를 씀
+
 
 # 원본 데이터에 섞여 있는 여러 표기(왼쪽)를 우리 프로그램의 표준 라벨(오른쪽)로 통일하는 대응표
 # 'Cross', 'X' 자체도 넣어둔 건 이미 표준형으로 들어온 값도 그대로 통과시키기 위함
@@ -28,6 +33,23 @@ def mac(pattern, filter_grid):
     for i in range(size):
         for j in range(size):
             total = total + pattern[i][j] * filter_grid[i][j]
+    return total
+
+def flatten(grid):
+    # 2차원 격자를 1차원 리스트로 폄: [[1,2],[3,4]] -> [1,2,3,4]
+    # 행을 위에서부터 순서대로 이어붙이므로 결과 길이는 항상 N*N
+    flat = []
+    for row in grid:
+        for value in row:
+            flat.append(value)
+    return flat
+
+def mac_flat(flat_a, flat_b):
+    # mac()과 결과값은 완전히 같아야 함. 다른 건 인덱싱과 반복문 구조뿐
+    # (두 리스트 길이가 같다고 전제 — flatten() 결과끼리만 넘길 것이므로)
+    total = 0.0
+    for k in range(len(flat_a)):
+        total = total + flat_a[k] * flat_b[k]
     return total
 
 def read_grid(title, size):
@@ -107,6 +129,23 @@ def measure(pattern, filter_grid):
     # / REPEAT       : 10으로 나눠서 1회당 평균 시간(초)
     # * 1000         : 초 -> 밀리초(ms) 단위로 변환
 
+def measure_flat(flat_a, flat_b):
+    # mac_flat() 1회 평균 시간(ms). measure()와 구조는 완전히 동일, 대상만 mac_flat으로 바뀜
+    start = time.perf_counter()
+    for _ in range(BONUS_REPEAT):
+        mac_flat(flat_a, flat_b)
+    end = time.perf_counter()
+    return (end - start) / BONUS_REPEAT * 1000
+
+def measure_bonus(pattern, filter_grid):
+    # mac() 1회 평균 시간(ms). 기존 measure()는 REPEAT(10)를 쓰므로 건드리지 않고,
+    # "2D를 BONUS_REPEAT(1000)로 잰 버전"을 별도로 만듦 — 1D와 동일 조건으로 비교하기 위함
+    start = time.perf_counter()
+    for _ in range(BONUS_REPEAT):
+        mac(pattern, filter_grid)
+    end = time.perf_counter()
+    return (end - start) / BONUS_REPEAT * 1000
+
 def print_perf_table(items):
     # items는 (크기, 패턴, 필터) 튜플들의 리스트가 들어올 예정 (스텝6에서 채워짐)
 
@@ -172,6 +211,40 @@ def performance_section(filters):
 
     print_perf_table(items)  # (3,5,13,25) 네 개짜리 items를 표로 출력
 
+def compare_section(filters):
+    # 보너스1 핵심: 2차원 mac() vs 1차원 mac_flat()을 동일 입력·동일 반복 횟수로 비교
+    print()
+    print('#---------------------------------------')
+    print('# 최적화 비교 (2D vs 1D, 평균/%d회)' % BONUS_REPEAT)
+    print('#---------------------------------------')
+
+    # 3x3은 data.json에 없으므로 성능 분석 때처럼 생성기로 만듦
+    items = [(3, make_cross(3))]
+    for key in sorted(filters, key=lambda k: int(k.split('_')[1])):
+        items.append((int(key.split('_')[1]), filters[key]['Cross']))
+
+    print('크기       2D(ms)      1D(ms)     개선율   결과일치')
+    print('-' * 52)
+
+    for size, grid in items:
+        flat = flatten(grid)  # 이 grid를 1차원으로 펴둠 (측정 시간에는 안 잡히는 사전 준비)
+
+        # 1) 결과가 같은지 먼저 검증 (최적화 검증의 원칙: 빠른지보다 맞는지가 먼저)
+        score_2d = mac(grid, grid)
+        score_1d = mac_flat(flat, flat)
+        # flatten()이 행 순서 그대로 이어붙이므로 덧셈 순서가 보존됨
+        # → 부동소수점 결과까지 비트 단위로 같아야 정상이라 ==로 비교해도 안전
+        same = 'OK' if score_2d == score_1d else 'DIFF'
+
+        # 2) 같은 조건(BONUS_REPEAT)으로 시간 측정
+        t2 = measure_bonus(grid, grid)
+        t1 = measure_flat(flat, flat)
+        # 개선율 = (느린쪽 - 빠른쪽) / 느린쪽 * 100. 음수면 오히려 느려졌다는 뜻
+        gain = (t2 - t1) / t2 * 100 if t2 > 0 else 0.0
+
+        print('%-10s %9.5f %11.5f %9.1f%% %8s'
+              % ('%dx%d' % (size, size), t2, t1, gain, same))
+        
 def mode_user_input():
     print()
     print('#---------------------------------------')
@@ -353,6 +426,23 @@ def mode_json():
     performance_section(filters)     # ← 추가 (섹션 번호 [3])
     summary_section(results)         # 결과 요약은 [4]로 밀림
 
+def mode_compare():
+    # 보너스 모드: data.json의 필터를 재료로 2D/1D 성능을 비교
+    # mode_json()과 파일 열기 부분이 거의 동일 — data.json이 필요하니 똑같이 예외 처리
+    print()
+    try:
+        with open('data.json', 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print('오류: data.json 파일을 찾을 수 없습니다. main.py와 같은 폴더에 두세요.')
+        return
+    except json.JSONDecodeError as e:
+        print('오류: data.json 형식이 잘못되었습니다 - %s' % e)
+        return
+
+    filters = load_filters(data)   # 필터만 로드 (패턴 분석/판정은 필요 없음)
+    compare_section(filters)       # 방금 만든 비교 함수 호출
+    
 def summary_section(results):
     total = len(results)  # 전체 케이스 개수 (튜플 리스트의 길이)
 
@@ -385,47 +475,19 @@ def main():
     print('[모드 선택]')
     print('1. 사용자 입력 (3x3)')
     print('2. data.json 분석')
+    print('3. 최적화 비교 (보너스)')   # ← 추가
 
-    while True:  # 유효한 선택(1 또는 2)이 나올 때까지 계속 물어봄
-        choice = input('선택: ').strip()  # strip()으로 앞뒤 공백 제거 (실수로 스페이스 눌러도 통과)
-
+    while True:
+        choice = input('선택: ').strip()
         if choice == '1':
             mode_user_input()
-            return       # main() 종료 → 프로그램 종료
-        if choice == '2':
-            mode_json()   # ← '(내일 만듭니다)' 대신 이걸로 교체
             return
-        print('1 또는 2를 입력하세요.')  # 잘못된 입력이면 안내 후 while 처음으로 돌아가 재질문
-
+        if choice == '2':
+            mode_json()
+            return
+        if choice == '3':               # ← 추가
+            mode_compare()
+            return
+        print('1, 2 또는 3을 입력하세요.')   # ← 안내 문구도 3 포함하도록 수정
 
 main()  # 이 줄이 있어야 파일을 실행했을 때 실제로 프로그램이 시작됨
-
-cross_filter = [
-    [0, 1, 0],
-    [1, 1, 1],
-    [0, 1, 0]
-]
-
-x_filter = [
-    [1, 0, 1],
-    [0, 1, 0],
-    [1, 0, 1]
-]
-
-cross_pattern = [
-    [0, 1, 0],
-    [1, 1, 1],
-    [0, 1, 0]
-]
-
-x_pattern = [
-    [1, 0, 1],
-    [0, 1, 0],
-    [1, 0, 1]
-]
-
-print("십자가 패턴 vs 십자가 필터:", mac(cross_pattern, cross_filter))
-print("십자가 패턴 vs X 필터:", mac(cross_pattern, x_filter))
-print("X 패턴 vs 십자가 필터:", mac(x_pattern, cross_filter))
-print("X 패턴 vs X 필터:", mac(x_pattern, x_filter))
-
