@@ -1,6 +1,8 @@
 import json
+import time
 
 EPSILON = 1e-9  # 판정 시 "사실상 같다"고 볼 오차 허용 범위. Day 3 data.json에도 동일하게 적용됨
+REPEAT = 10  # 성능 측정 시 반복 횟수. 나중에 100/1000으로 바꿔 실험할 때 이 한 곳만 고치면 됨
 
 # 원본 데이터에 섞여 있는 여러 표기(왼쪽)를 우리 프로그램의 표준 라벨(오른쪽)로 통일하는 대응표
 # 'Cross', 'X' 자체도 넣어둔 건 이미 표준형으로 들어온 값도 그대로 통과시키기 위함
@@ -87,6 +89,89 @@ def judge(score_a, score_b, label_a, label_b):
         return label_a
     return label_b  # score_a <= score_b인 경우 (동점은 이미 위에서 걸러졌으므로 실질적으로 score_b가 더 큰 경우)
 
+def measure(pattern, filter_grid):
+    start = time.perf_counter()  # 반복 시작 직전 시각
+
+    for _ in range(REPEAT):
+        # '_'는 "이 변수를 실제로 안 쓴다"는 관례적 이름. range(10)이 주는 0~9 값을 받을 변수가
+        # 필요하긴 한데(for문 문법상), 값 자체는 안 쓰고 "10번 돌린다"는 게 목적이라 _로 표시
+        mac(pattern, filter_grid)
+        # 반환값(total)을 안 받고 그냥 호출만 함 — 여기선 "계산이 실제로 실행되는 시간"만 재는 게
+        # 목적이라 결과값은 필요 없음. print나 파일 읽기가 이 안에 없는 것도 같은 이유
+        # (미션이 "I/O 제외, 연산 함수 호출 구간만" 측정하라고 요구했기 때문)
+
+    end = time.perf_counter()  # 10번 다 돈 직후 시각
+
+    return (end - start) / REPEAT * 1000
+    # (end - start) : 10번 도는 데 걸린 총 시간(초)
+    # / REPEAT       : 10으로 나눠서 1회당 평균 시간(초)
+    # * 1000         : 초 -> 밀리초(ms) 단위로 변환
+
+def print_perf_table(items):
+    # items는 (크기, 패턴, 필터) 튜플들의 리스트가 들어올 예정 (스텝6에서 채워짐)
+
+    print('크기       평균 시간(ms)     연산 횟수')
+    print('-' * 38)  # '-'를 38번 반복해서 구분선 생성 (문자열 * 정수 = 반복, 어제 '2'*3 실험과 같은 원리)
+
+    for size, pattern, filter_grid in items:  # 튜플 3개를 한 번에 세 변수로 언패킹
+        avg_ms = measure(pattern, filter_grid)  # 방금 만든 measure()로 평균 시간 계산
+        label = '%dx%d' % (size, size)          # 예: size=5 -> '5x5'
+
+        # %-10s : 문자열을 왼쪽 정렬, 최소 10칸
+        # %12.4f : 실수를 12칸 너비로, 소수점 아래 4자리까지
+        # %10d  : 정수를 10칸 너비로 (오른쪽 정렬이 기본이라 자릿수가 눈에 잘 들어옴)
+        print('%-10s %12.4f %10d' % (label, avg_ms, size * size))
+        # size * size = 연산 횟수 (곱셈이 정확히 N번×N번 = N²번 일어나므로)
+
+def make_cross(size):
+    mid = size // 2
+    # '//' 는 정수 나눗셈(몫만 취함). 3//2 = 1, 5//2 = 2. "가운데 줄 번호"를 구하는 계산
+
+    grid = []
+    for i in range(size):
+        row = []
+        for j in range(size):
+            if i == mid or j == mid:
+                # 지금 위치가 "가운데 행"이거나 "가운데 열"이면 1
+                row.append(1.0)
+            else:
+                row.append(0.0)
+        grid.append(row)
+    return grid
+
+
+def make_x(size):
+    grid = []
+    for i in range(size):
+        row = []
+        for j in range(size):
+            if i == j or i + j == size - 1:
+                # i == j            : 왼쪽 위 -> 오른쪽 아래 대각선 (행번호 = 열번호)
+                # i + j == size - 1 : 오른쪽 위 -> 왼쪽 아래 대각선 (행+열 = 마지막 인덱스)
+                row.append(1.0)
+            else:
+                row.append(0.0)
+        grid.append(row)
+    return grid
+
+def performance_section(filters):
+    print()
+    print('#---------------------------------------')
+    print('# [3] 성능 분석 (평균/%d회)' % REPEAT)
+    print('#---------------------------------------')
+
+    # 3x3은 로드된 필터가 없으니 방금 만든 생성기로 직접 만듦
+    # 자기 자신과 곱하는 이유: 시간만 재는 거라 "무엇과 곱하든" 상관없음 (판정하는 게 아니므로)
+    items = [(3, make_cross(3), make_cross(3))]
+
+    # 5, 13, 25는 어제(Day3) load_filters()가 이미 로드해둔 filters를 재활용
+    for key in sorted(filters, key=lambda k: int(k.split('_')[1])):
+        size = int(key.split('_')[1])
+        grid = filters[key]['Cross']  # Cross 필터를 재료로 씀 (X를 써도 시간상 차이 없음)
+        items.append((size, grid, grid))
+
+    print_perf_table(items)  # (3,5,13,25) 네 개짜리 items를 표로 출력
+
 def mode_user_input():
     print()
     print('#---------------------------------------')
@@ -114,9 +199,10 @@ def mode_user_input():
     # 어제 만든 mac()을 그대로 재사용 — 패턴 vs 필터A, 패턴 vs 필터B 각각 점수 계산
     score_a = mac(pattern, filter_a)
     score_b = mac(pattern, filter_b)
-
-    # judge()에 'A', 'B'를 라벨로 넘김 (Day3에서는 여기 자리에 'Cross', 'X'가 들어갈 예정)
     verdict = judge(score_a, score_b, 'A', 'B')
+    avg_ms = measure(pattern, filter_a)
+    # ↑ 추가: 판정용 mac() 호출과는 별개로, 시간 측정 전용으로 measure()를 한 번 더 호출
+    # (measure 안에서 mac()을 10번 더 돌리는 것 — 판정 결과에는 영향 없음, 순수 시간 재기용)
 
     print()
     print('#---------------------------------------')
@@ -124,11 +210,21 @@ def mode_user_input():
     print('#---------------------------------------')
     print('A 점수:', score_a)
     print('B 점수:', score_b)
+    print('연산 시간(평균/%d회): %.4f ms' % (REPEAT, avg_ms))
+    # ↑ 추가. %.4f는 %12.4f에서 칸수 지정만 뺀 것 — 소수점 4자리까지, 칸 너비는 자유
 
     if verdict == 'UNDECIDED':
         print('판정: 판정 불가 (|A-B| < %g)' % EPSILON)
     else:
         print('판정: %s' % verdict)
+
+    print()
+    print('#---------------------------------------')
+    print('# [4] 성능 분석 (평균/%d회)' % REPEAT)
+    print('#---------------------------------------')
+    print_perf_table([(3, pattern, filter_a)])
+    # 모드1은 입력이 3x3 하나뿐이라 items 리스트에 항목 1개만 넣어서 print_perf_table 재사용
+    
 
 def load_filters(data):
     print('#---------------------------------------')
@@ -252,9 +348,10 @@ def mode_json():
         return
 
     # --- 여기까지 왔다는 건 data.json을 성공적으로 읽었다는 뜻 ---
-    filters = load_filters(data)               # ★ 스텝5에서 만든 함수, 여기서 처음 호출됨
-    results = analyze_patterns(data, filters)   # ★ 스텝6에서 만든 함수, 여기서 호출됨
-    summary_section(results)                    # ★ 방금 만든 함수, 여기서 호출됨
+    filters = load_filters(data)
+    results = analyze_patterns(data, filters)
+    performance_section(filters)     # ← 추가 (섹션 번호 [3])
+    summary_section(results)         # 결과 요약은 [4]로 밀림
 
 def summary_section(results):
     total = len(results)  # 전체 케이스 개수 (튜플 리스트의 길이)
